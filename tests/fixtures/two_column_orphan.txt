@@ -1,0 +1,11 @@
+Wage Determination No.: 2015-4281
+Revision No.: 24
+State: California
+
+OCCUPATION CODE - TITLE                     RATE
+
+01011 - Accounting Clerk I
+18.42
+11150 - Janitor                             17.34
+
+HEALTH & WELFARE: $5.55 per hour

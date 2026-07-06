@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sca-extraction"
+version = "0.1.0"
+description = "Citation-traceable, confidence-scored extraction of SCA wage determinations for payroll."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+# Core has NO third-party runtime dependencies. PDF ingestion relies on the
+# external CLIs poppler-utils (pdftotext/pdftoppm) and tesseract-ocr when used.
+dependencies = []
+
+[project.scripts]
+sca-extract = "sca_extraction.__main__:main"
+
+[tool.setuptools]
+packages = ["sca_extraction"]
+
+[tool.setuptools.package-data]
+sca_extraction = ["data/*.json"]
