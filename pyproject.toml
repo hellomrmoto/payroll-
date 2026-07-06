@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wd-reader"
+version = "1.0.0"
+description = "WD Reader — deterministic, citation-traceable wage-determination parsing engine for Clean Payroll and Ledger"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+dependencies = []
+
+[project.optional-dependencies]
+# The OCR adapter shells out to system binaries (Poppler + Tesseract); no
+# Python packages are required for the deterministic core or its tests.
+dev = ["pytest>=7"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
