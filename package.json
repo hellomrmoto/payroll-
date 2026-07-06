@@ -1,0 +1,27 @@
+{
+  "name": "clean-payroll-ledger",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A decision-authorization layer over federally regulated payroll execution for small federal service contractors (McNamara-O'Hara Service Contract Act). Constrains payroll so the enumerated DOL liability events become structurally hard to trigger by accident.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "scripts": {
+    "test": "node --test \"test/**/*.test.ts\"",
+    "demo": "node scripts/demo.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "keywords": [
+    "sca",
+    "service-contract-act",
+    "wage-determination",
+    "federal-contracting",
+    "compliance",
+    "payroll"
+  ],
+  "license": "UNLICENSED"
+}

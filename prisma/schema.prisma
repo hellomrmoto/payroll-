@@ -1,0 +1,276 @@
+// Clean Payroll & Ledger — SCA-native core data model.
+//
+// PRD §7 core chain:
+//   Contract -> WageDetermination -> Classification -> Employee
+//     -> WorkerAssignment -> Timecard (contract-segregated)
+//     -> PayrollRecord (wage + fringe stored SEPARATELY)
+//     -> ComplianceCheck (type: observation | recommendation)
+//     -> AuditLog (immutable)
+//
+// This model is built for the Service Contract Act's real mechanics (per-hour
+// H&W fringe, odd/even determinations, contract-segregated hours, separate
+// wage/fringe records), NOT retrofitted from Davis-Bacon (PRD §2.2 moat #1).
+//
+// Target: PostgreSQL via Supabase (PRD §7). This file is the schema of record;
+// generate the client with `prisma generate` once dependencies are installed.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Tenancy / auth (PRD §7: owner, admin, bookkeeper(read-only); design for SOC2)
+// ---------------------------------------------------------------------------
+
+model Org {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+
+  users     User[]
+  contracts Contract[]
+  employees Employee[]
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  BOOKKEEPER // read-only
+}
+
+model User {
+  id        String   @id @default(cuid())
+  orgId     String
+  email     String   @unique
+  role      Role     @default(OWNER)
+  createdAt DateTime @default(now())
+
+  org       Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+}
+
+// ---------------------------------------------------------------------------
+// Contract vault (PRD §3.1(1))
+// ---------------------------------------------------------------------------
+
+model Contract {
+  id                 String   @id @default(cuid())
+  orgId              String
+  name               String
+  agency             String?
+  contractNumber     String?
+  contractValue      Decimal? @db.Money
+  placeOfPerfCounty  String?
+  placeOfPerfState   String?
+  // Applicable clauses (PRD §3.1(1)): 52.219-14, 52.222-41, 52.222-43
+  clauses            String[] @default([])
+  baseStart          DateTime?
+  baseEnd            DateTime?
+  createdAt          DateTime @default(now())
+
+  org                Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  wageDeterminations WageDetermination[]
+  optionPeriods      OptionPeriod[]
+  assignments        WorkerAssignment[]
+  timecards          Timecard[]
+  payrollRecords     PayrollRecord[]
+  complianceChecks   ComplianceCheck[]
+  auditLogs          AuditLog[]
+
+  @@index([orgId])
+}
+
+// Option-year tracking for the WD-increase/option-year watchdog (PRD §3.1(5)).
+model OptionPeriod {
+  id           String   @id @default(cuid())
+  contractId   String
+  ordinal      Int // 0 = base, 1 = option 1, ...
+  startDate    DateTime
+  endDate      DateTime
+  // Whether the newly incorporated WD increase has been applied (event #6).
+  wdRefreshDue Boolean  @default(false)
+
+  contract     Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@unique([contractId, ordinal])
+  @@index([contractId])
+}
+
+// ---------------------------------------------------------------------------
+// Wage determination + classifications (PRD §4, deterministic reader output)
+// ---------------------------------------------------------------------------
+
+enum WdParity {
+  ODD
+  EVEN
+}
+
+model WageDetermination {
+  id             String   @id @default(cuid())
+  contractId     String
+  wdNumber       String // e.g. "2015-5657"
+  revision       Int
+  effectiveDate  DateTime
+  parity         WdParity?
+  locality       String
+  healthWelfare  Decimal  @db.Money // per-hour H&W fringe
+  // Full typed reader output (WageDeterminationDoc) with per-field confidence
+  // and citation spans, retained for drill-down (PRD §5.2).
+  extraction     Json?
+  sourcePdfUrl   String?
+  createdAt      DateTime @default(now())
+
+  contract        Contract         @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  classifications Classification[]
+  payrollRecords  PayrollRecord[]
+  complianceChecks ComplianceCheck[]
+
+  @@unique([contractId, wdNumber, revision])
+  @@index([contractId])
+}
+
+model Classification {
+  id                  String  @id @default(cuid())
+  wageDeterminationId String
+  code                String // SCA occupation code, e.g. "11150"
+  title               String
+  baseRate            Decimal @db.Money
+  // Confidence + review flag carried from the reader (PRD §4).
+  codeConfidence      Float   @default(1)
+  needsReview         Boolean @default(false)
+
+  wageDetermination   WageDetermination @relation(fields: [wageDeterminationId], references: [id], onDelete: Cascade)
+  assignments         WorkerAssignment[]
+
+  @@unique([wageDeterminationId, code])
+  @@index([wageDeterminationId])
+}
+
+// ---------------------------------------------------------------------------
+// Workers, assignments, contract-segregated timecards
+// ---------------------------------------------------------------------------
+
+model Employee {
+  id        String   @id @default(cuid())
+  orgId     String
+  name      String
+  externalId String? // id in the payroll system (Gusto/QuickBooks/ADP)
+  createdAt DateTime @default(now())
+
+  org         Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  assignments WorkerAssignment[]
+  timecards   Timecard[]
+  payrollRecords PayrollRecord[]
+
+  @@index([orgId])
+}
+
+// Assigns an employee to a classification on a contract (PRD §3.1(3)).
+model WorkerAssignment {
+  id               String   @id @default(cuid())
+  contractId       String
+  employeeId       String
+  classificationId String
+  createdAt        DateTime @default(now())
+
+  contract       Contract       @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  employee       Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  classification Classification @relation(fields: [classificationId], references: [id])
+
+  @@unique([contractId, employeeId, classificationId])
+  @@index([contractId])
+  @@index([employeeId])
+}
+
+// Hours must be segregated by contract (event #7: split workers).
+model Timecard {
+  id          String   @id @default(cuid())
+  contractId  String
+  employeeId  String
+  periodStart DateTime
+  periodEnd   DateTime
+  hours       Decimal  @db.Decimal(10, 2)
+  createdAt   DateTime @default(now())
+
+  contract    Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  employee    Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([contractId, employeeId])
+}
+
+// PayrollRecord: wage and fringe stored SEPARATELY (29 CFR 4.170, event #4).
+model PayrollRecord {
+  id                  String   @id @default(cuid())
+  contractId          String
+  employeeId          String
+  wageDeterminationId String
+  classificationCode  String
+  hours               Decimal  @db.Decimal(10, 2)
+  hourlyBaseWage      Decimal  @db.Money
+  // Nullable ON PURPOSE: a null fringe means no separate record exists, which
+  // is itself a finding — never coerced to zero.
+  hourlyFringe        Decimal? @db.Money
+  payDate             DateTime
+  // Provenance for audit trust (PRD §5.2): where each figure came from.
+  source              String   @default("import") // import | csv | manual
+  createdAt           DateTime @default(now())
+
+  contract          Contract          @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  employee          Employee          @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  wageDetermination WageDetermination @relation(fields: [wageDeterminationId], references: [id])
+  complianceChecks  ComplianceCheck[]
+
+  @@index([contractId, employeeId])
+}
+
+// ---------------------------------------------------------------------------
+// Findings — observation | recommendation, NEVER legal_conclusion (PRD §5.1)
+// ---------------------------------------------------------------------------
+
+enum FlagType {
+  OBSERVATION
+  RECOMMENDATION
+  // NOTE: there is deliberately no LEGAL_CONCLUSION member. The absence is the
+  // point (PRD §5.1): the data model itself cannot represent an assertion of
+  // legal status.
+}
+
+model ComplianceCheck {
+  id                  String   @id @default(cuid())
+  contractId          String
+  wageDeterminationId String?
+  payrollRecordId     String?
+  type                FlagType
+  event               String // misclassification | below_wage | below_fringe | fringe_not_separate | within_determination
+  message             String
+  citations           Json // array of { key, label, url, says }
+  detail              Json?
+  severity            String   @default("review") // info | review
+  createdAt           DateTime @default(now())
+
+  contract          Contract           @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  wageDetermination WageDetermination? @relation(fields: [wageDeterminationId], references: [id])
+  payrollRecord     PayrollRecord?     @relation(fields: [payrollRecordId], references: [id])
+
+  @@index([contractId])
+}
+
+// Immutable audit log (PRD §7). Append-only; no update/delete in application.
+model AuditLog {
+  id         String   @id @default(cuid())
+  contractId String
+  actor      String // user id or "system"
+  action     String
+  payload    Json
+  createdAt  DateTime @default(now())
+
+  contract   Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@index([contractId, createdAt])
+}
