@@ -1,6 +1,26 @@
 # payroll-
 
-## SCA Wage Determination Extraction (`sca_extraction`)
+This repository contains **two independent implementations of the same spec** —
+the WD Reader Production Build Spec (v1.0, Phase 0): turning a government wage
+determination (including scanned, image-only, two-column ones) into a
+deterministic, citation-traceable data object with per-field confidence and a
+human-confirmation queue.
+
+They were built in parallel and both are kept here:
+
+| Engine | Package | Layout | CLI | Schema style |
+|---|---|---|---|---|
+| **sca_extraction** | `sca_extraction/` | flat | `python -m sca_extraction` | every leaf wrapped as `{value, _meta}`; odd/even = `parity` |
+| **wd_reader** | `src/wd_reader/` | src | `python -m wd_reader` | typed leaves with sidecar `_meta`; odd/even = `wd_type` |
+
+Both share the same cardinal rule — *never emit a wrong number as if it were
+right; when unsure, queue for human confirmation* — and both keep auto-confirm
+gated on a cross-check. Run the whole test suite with `python -m pytest -q`
+(covers both engines).
+
+---
+
+# Engine A — SCA Wage Determination Extraction (`sca_extraction`)
 
 Turn a government **Service Contract Act (SCA) wage determination** — including
 scanned/image-only and two-column documents — into a deterministic,
@@ -159,5 +179,108 @@ returning silent empty text.
 ### Tests
 
 ```bash
-python -m unittest discover -s tests
+python -m unittest discover -s tests    # engine A's unittest suite
 ```
+
+---
+
+# Engine B — WD Reader (`wd_reader`)
+
+**The make-or-break engine of Clean Payroll and Ledger.** Same job as Engine A,
+built independently under `src/wd_reader/` with a typed dataclass schema (leaves
+are typed values with a sidecar `_meta`, exact `Decimal` rates, odd/even carried
+as `wd_type`).
+
+### The cardinal rule
+
+> A rate is only emitted downstream as **confirmed** if it is either
+> **(a)** above the confidence threshold **AND** cross-checked against the
+> authoritative SAM.gov structured WD, or **(b)** human-confirmed.
+> Everything else lands in the confirmation queue.
+
+### What is in it (and the honesty boundary)
+
+The correctness-critical core is built **and proven with tests**, using only the
+Python standard library:
+
+| Capability | Module | Status |
+|---|---|---|
+| Deterministic typed output schema, exact decimals | `schema.py` | Implemented + tested |
+| SCA Directory of Occupations (code authority) | `sca_directory.py` | Implemented (representative subset; full list is a data swap) |
+| OCR corruption detection + correction | `ocr_correction.py` | Implemented + tested |
+| Validation + confidence scoring + thresholds | `confidence.py` | Implemented + tested |
+| Structural parse / field extraction | `extraction.py` | Implemented + tested |
+| Conflict resolution | `conflict.py` | Implemented + tested |
+| SAM.gov cross-check reconciliation | `crosscheck.py` | Implemented + tested (live client is an adapter; offline double provided) |
+| Human-confirmation queue | `confirmation.py` | Implemented + tested |
+| Pipeline orchestration | `pipeline.py` | Implemented + tested |
+
+The parts that depend on external systems are **clean, documented adapter
+seams** — the engine core never depends on them directly:
+
+- **`sources.OcrExtractor`** shells out to Poppler (`pdftoppm`) + Tesseract at
+  ≥ 300 DPI with a layout-aware page-segmentation mode (PSM 6). It requires
+  those binaries; where they are absent it raises `SourceUnavailable` rather
+  than degrading silently. It is **not claimed to be exercised** where those
+  binaries are absent.
+- **`crosscheck.SamGovSource`** is a protocol; the live SAM.gov client plugs in
+  behind it. The reconciliation logic is tested against an in-memory double
+  (`InMemorySamGov`), so no network is required to prove it.
+
+### Quick start
+
+```bash
+# Reference example (hostile OCR of WD 2015-5657, no SAM.gov)
+PYTHONPATH=src python3 -m wd_reader demo
+
+# Read a real PDF (needs Poppler + Tesseract for image-only scans)
+PYTHONPATH=src python3 -m wd_reader read path/to/wd.pdf --state CA --county Tulare
+```
+
+```python
+from decimal import Decimal
+from wd_reader import read_pdf, ContractMetadata, InMemorySamGov, StructuredWd
+
+samgov = InMemorySamGov({
+    "2015-5657": StructuredWd(
+        wd_number="2015-5657", revision=24,
+        rates_by_code={"11150": Decimal("17.56")}, hw_rate=Decimal("5.55"),
+    )
+})
+result = read_pdf("wd.pdf",
+                  contract=ContractMetadata(pop_state="CA", pop_county="Tulare"),
+                  samgov=samgov)
+print(result.wage_determination.to_json())
+for item in result.confirmation_queue:      # only the doubtful fields
+    print(item.field_path, item.value, item.disposition, item.note)
+```
+
+### Corruption recovery (grounded in WD 2015-5657)
+
+The reference document is a scanned image PDF; its OCR is corruptible. The engine
+recovers every observed corruption to ground truth using three independent
+signals — homoglyph mapping, bounded digit confusions, and **title match against
+the SCA Directory** (the primary key; it is what disambiguates `61313 → 01313`).
+Candidates are **only ever real Directory codes** — it never invents a code.
+
+| Ground truth | OCR output | Recovered to |
+|---|---|---|
+| `01311 - Secretary I` | `@1311 - Secretary I` | `01311` |
+| `01313 - Secretary III` | `61313 - Secretary IIT` | `01313` |
+| `09000 - Furniture…` | `e9eee - Furniture…` | `09000` (family header) |
+| `11150 - Janitor` | `11150 - Janitor` | `11150` (clean) |
+
+Thresholds: ≥ 0.95 **and** cross-checked → auto-confirm; 0.80–0.95 →
+soft-confirm; < 0.80 → hard confirm. Tunable via `confidence.Thresholds`.
+
+### Tests
+
+```bash
+python3 -m pytest -q tests/test_wd_reader_*.py    # engine B's pytest suite
+```
+
+Covers: every reference corruption → correct recovery; the
+**zero-silent-wrong-rates** gate (Phase 0 acceptance criterion 1); cross-check
+enabling auto-confirm on agreement and blocking it on divergence; orphaned /
+out-of-band / missing rates; locality mismatch; indeterminate `wd_type`;
+duplicate titles; document rejection; and schema faithfulness.
