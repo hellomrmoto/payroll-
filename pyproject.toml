@@ -3,22 +3,39 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "wd-reader"
+name = "sca-extraction"
 version = "1.0.0"
-description = "WD Reader — deterministic, citation-traceable wage-determination parsing engine for Clean Payroll and Ledger"
+description = "Citation-traceable, confidence-scored extraction of SCA wage determinations for payroll (two parallel engines: sca_extraction and wd_reader)."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Proprietary" }
+# Neither engine's core has third-party runtime dependencies. PDF ingestion
+# relies on the external CLIs poppler-utils (pdftotext/pdftoppm) and
+# tesseract-ocr when used.
 dependencies = []
 
 [project.optional-dependencies]
-# The OCR adapter shells out to system binaries (Poppler + Tesseract); no
-# Python packages are required for the deterministic core or its tests.
 dev = ["pytest>=7"]
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[project.scripts]
+sca-extract = "sca_extraction.__main__:main"
+wd-reader = "wd_reader.cli:main"
+
+# Two engines implementing the same spec live side by side (see README):
+#   sca_extraction/  -- flat layout, ships bundled JSON directory data
+#   src/wd_reader/   -- src layout
+[tool.setuptools]
+packages = ["sca_extraction", "wd_reader"]
+
+[tool.setuptools.package-dir]
+sca_extraction = "sca_extraction"
+wd_reader = "src/wd_reader"
+
+[tool.setuptools.package-data]
+sca_extraction = ["data/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+# "." makes sca_extraction importable (flat layout); "src" makes wd_reader
+# importable (src layout).
+pythonpath = [".", "src"]
