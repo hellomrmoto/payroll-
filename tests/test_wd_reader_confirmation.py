@@ -8,7 +8,7 @@ from wd_reader import read_document
 from wd_reader.schema import SourceType
 from wd_reader.sources import Document, TextLayerExtractor
 
-from fixtures import WD_2015_5657_OCR, WD_TEXTLAYER_CLEAN
+from wd_reader_fixtures import WD_2015_5657_OCR, WD_TEXTLAYER_CLEAN
 
 
 def _ocr_doc(text: str) -> Document:

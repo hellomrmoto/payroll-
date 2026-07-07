@@ -19,7 +19,7 @@ from wd_reader.confidence import disposition
 from wd_reader.schema import SourceType
 from wd_reader.sources import Document, TextLayerExtractor
 
-from fixtures import (
+from wd_reader_fixtures import (
     WD_2015_5657_OCR,
     WD_ORPHANED_RATE_OCR,
     WD_OUT_OF_BAND_OCR,

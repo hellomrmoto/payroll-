@@ -12,7 +12,7 @@ from wd_reader.schema import (
 )
 from wd_reader.sources import TextLayerExtractor
 
-from fixtures import WD_TEXTLAYER_CLEAN
+from wd_reader_fixtures import WD_TEXTLAYER_CLEAN
 
 
 def test_rates_are_exact_decimals_not_floats():
